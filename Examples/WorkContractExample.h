@@ -1,0 +1,13 @@
+//
+// Created by Geenz on 8/8/25.
+//
+
+#ifndef ENTROPYCORE_WORKCONTRACTEXAMPLE_H
+#define ENTROPYCORE_WORKCONTRACTEXAMPLE_H
+
+
+class WorkContractExample {
+};
+
+
+#endif //ENTROPYCORE_WORKCONTRACTEXAMPLE_H
