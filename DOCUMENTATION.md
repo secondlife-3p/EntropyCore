@@ -42,11 +42,11 @@ This guide defines documentation standards for the Entropy Engine project. Our g
 ### Keep These Detailed:
 - **Constructors/Destructors** - Resource allocation and cleanup behavior
 - **Complex algorithms** - Step-by-step explanation if non-trivial
-- **Thread safety** - Mention conversationally: "Can be called from any thread"
+- **Thread safety** - For example: "Can be called from any thread"
 - **Code examples** - Always include for non-trivial functionality (worth the space!)
 
 ### Keep These Brief:
-- **Simple getters/setters** - One line is enough
+- **Simple getters/setters** - One line is enough.  Perhaps even consider if you need to document these if it's extremely obvious what they do.
 - **Internal methods** - Focus on purpose, not implementation
 - **Parameter descriptions** - One line unless special behavior
 - **Member variables** - One-line inline comments
@@ -171,21 +171,6 @@ private:
     mutable std::mutex _mutex;                ///< Protects item modifications
 ```
 
-## Quality Checklist
-
-Before submitting code, verify:
-- [ ] All public methods have @brief, parameters, return, and example
-- [ ] Complex methods have 2-3 lines of explanation
-- [ ] Examples compile and demonstrate real usage
-- [ ] No unverifiable performance claims
-- [ ] Constructor/destructor behavior is documented
-- [ ] Thread safety is mentioned where relevant
-- [ ] Private methods are documented (briefly)
-- [ ] Member variables have inline comments
-- [ ] Implementation comments (// style) are preserved
-- [ ] Code examples are kept intact
-- [ ] Documentation is 40-50% more concise (not 70-80%)
-
 ## Remember
 
 Good documentation answers three questions:
@@ -194,11 +179,3 @@ Good documentation answers three questions:
 3. **How** do I use it? (example)
 
 Keep it concise. If you can't explain it in 3-5 lines, consider whether the API itself is too complex.
-
-## Key Guidelines for Applying Standards
-
-1. **Only modify documentation blocks** (/** */) - never touch implementation comments (//)
-2. **Always preserve code examples** - they're essential for understanding
-3. **Aim for balanced reduction** - 40-50% more concise, not extreme minimalism
-4. **Keep valuable details** - Constructor/destructor behavior, thread safety, error conditions
-5. **Focus on clarity** - Shorter doesn't mean cryptic; maintain usefulness
