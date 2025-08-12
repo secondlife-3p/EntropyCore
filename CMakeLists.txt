@@ -166,6 +166,8 @@ if(ENTROPY_BUILD_TESTS)
             Tests/WorkGraphVectorTest.cpp
             Tests/WorkGraphIsolatedHangTest.cpp
             Tests/WorkGraphMainThreadTest.cpp
+            Tests/SignalTreeTests.cpp
+            Tests/WorkContractGroupAccountingTests.cpp
     )
 
     target_link_libraries(EntropyCoreTests 
