@@ -25,7 +25,9 @@ namespace Concurrency {
     // Helper function to create appropriately sized SignalTree
     std::unique_ptr<SignalTreeBase> WorkContractGroup::createSignalTree(size_t capacity) {
         size_t leafCount = (capacity + 63) / 64;
-        size_t powerOf2 = roundUpToPowerOf2(leafCount);
+        // Ensure minimum of 2 leaves to avoid single-node tree bug
+        // where the same node serves as both root counter and leaf bitmap
+        size_t powerOf2 = std::max(roundUpToPowerOf2(leafCount), size_t(2));
         
         return std::make_unique<SignalTree>(powerOf2);
     }
