@@ -81,23 +81,14 @@ class WorkContractGroup;
  * @endcode
  */
 class WorkService : public IConcurrencyProvider {
-    // Lock-free management of work contract groups using RCU (Read-Copy-Update)
-    // Note: macOS doesn't support std::atomic<std::shared_ptr<T>>, so we use raw pointers
-    // with deferred reclamation for memory safety
-    std::atomic<const std::vector<WorkContractGroup*>*> _workContractGroups;
-    std::atomic<size_t> _workContractGroupCount;                      ///< Current count of work contract groups
-    std::atomic<uint64_t> _groupsGeneration{0};                       ///< Generation counter for detecting group list changes
-    std::atomic<uint64_t> _globalEpoch{0};                            ///< Global epoch counter for safe destruction
+    // Shared mutex management of work contract groups
+    // HOT PATH (executeWork): shared_lock for concurrent reads
+    // COLD PATH (add/remove): unique_lock for exclusive writes
+    mutable std::shared_mutex _workContractGroupsMutex;
+    std::vector<WorkContractGroup*> _workContractGroups;
+    size_t _workContractGroupCount = 0;                               ///< Current count of work contract groups
     std::vector<std::jthread> _threads;                               ///< Worker threads that execute contracts
     std::unique_ptr<IWorkScheduler> _scheduler;                       ///< Scheduler strategy for selecting work groups
-
-    // Deferred memory reclamation for retired group vectors
-    struct RetiredVector {
-        const std::vector<WorkContractGroup*>* vector;
-        uint64_t retiredGeneration;
-    };
-    mutable std::mutex _retireMutex;                                  ///< Protects _retiredVectors only (not on critical path)
-    std::vector<RetiredVector> _retiredVectors;                      ///< Vectors awaiting safe deletion
 
     std::atomic<bool> _running = false;
 
@@ -430,51 +421,7 @@ private:
      */
     void executeWork(const std::stop_token& token);
 
-    /**
-     * @brief Safely retires a group vector using epoch-based reclamation
-     *
-     * This implements the "retire" phase of epoch-based memory reclamation (EBR).
-     * When we need to update the groups vector, we can't immediately delete the
-     * old one because worker threads might still be reading from it lock-free.
-     *
-     * The retirement process:
-     * 1. Take the old vector pointer that needs deletion
-     * 2. Record the current global generation when retirement happens
-     * 3. Add both to the retire list under mutex protection
-     * 4. The vector will be deleted later when all threads have moved past this generation
-     *
-     * This is much more efficient than reader-writer locks because the common case
-     * (threads reading the group list) has zero synchronization overhead. Only the
-     * rare case (updating the group list) requires any locking.
-     *
-     * This is private because memory management is an internal implementation detail.
-     * Users add/remove groups through the public API which handles retirement automatically.
-     *
-     * @param vec The vector to retire for later deletion (nullptr is safe and ignored)
-     */
-    void retireVector(const std::vector<WorkContractGroup*>* vec);
 
-    /**
-     * @brief Reclaims memory from retired vectors using safe generation tracking
-     *
-     * This implements the "reclaim" phase of epoch-based memory reclamation (EBR).
-     * We scan through retired vectors and delete ones that are guaranteed to be
-     * unreachable by any worker thread.
-     *
-     * The reclamation algorithm:
-     * 1. Find the minimum generation across all worker threads
-     * 2. Any retired vector with generation < minimum is safe to delete
-     * 3. Delete those vectors and remove them from the retire list
-     * 4. Keep vectors with generation >= minimum for future reclamation
-     *
-     * This is called periodically during normal operation and always during
-     * destructor to prevent unbounded memory growth. The frequency is carefully
-     * chosen to balance memory usage with reclamation overhead.
-     *
-     * This is private because it's an internal memory management mechanism.
-     * The timing and safety of reclamation is managed automatically by the service.
-     */
-    void reclaimRetiredVectors();
 
     Config _config;
 
@@ -488,22 +435,6 @@ private:
     /// Provides a stable thread ID (0 to threadCount-1) for the lifetime of each worker thread.
     /// Thread-local because each thread needs its own unique, persistent identifier.
     static thread_local size_t stThreadId;
-    
-    /// Thread-local pointer to this thread's generation counter for epoch-based reclamation
-    /// Points to an atomic counter that tracks which "generation" of the groups vector this
-    /// thread is currently reading. Used by the memory reclamation system to know when
-    /// old vectors can be safely deleted. Thread-local because each thread needs its own
-    /// generation tracking to enable lock-free reads of the groups vector.
-    static thread_local std::atomic<uint64_t>* stLocalGeneration;
-    
-    /// Thread-local pointer to this thread's epoch counter for fine-grained tracking
-    /// Provides more granular tracking than generation for advanced reclamation strategies.
-    /// Thread-local because each thread needs independent epoch tracking for optimal
-    /// lock-free memory management.
-    static thread_local std::atomic<uint64_t>* stLocalEpoch;
-    std::vector<std::atomic<uint64_t>*> _threadGenerations;
-    std::vector<std::atomic<uint64_t>*> _threadEpochs;
-    std::mutex _threadRegistryMutex;
 };
 
 } // Concurrency

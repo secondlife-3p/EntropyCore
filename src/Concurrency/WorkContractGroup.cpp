@@ -206,11 +206,15 @@ namespace Concurrency {
         ENTROPY_ASSERT(mainThreadSelectingCount == 0, "WorkContractGroup destroyed with threads still in selectForMainThreadExecution");
 
         // Then notify the concurrency provider to remove us from active groups
+        // CRITICAL: Read provider without holding lock to avoid ABBA deadlock
+        IConcurrencyProvider* provider = nullptr;
         {
             std::unique_lock<std::shared_mutex> lock(_concurrencyProviderMutex);
-            if (_concurrencyProvider) {
-                _concurrencyProvider->notifyGroupDestroyed(this);
-            }
+            provider = _concurrencyProvider;
+        }
+
+        if (provider) {
+            provider->notifyGroupDestroyed(this);
         }
     }
 

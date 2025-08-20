@@ -29,6 +29,7 @@
 #include <thread>
 #include <condition_variable>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <limits>
 
@@ -176,9 +177,22 @@ namespace Concurrency {
         /**
          * @brief Destructor ensures all work is stopped and completed
          * 
-         * Calls stop() to prevent new work selection, then wait() to ensure
-         * all executing work completes. Finally notifies the concurrency provider
-         * (if any) that the group is being destroyed.
+         * Follows a strict destruction protocol to prevent deadlocks:
+         * 1. Calls stop() to prevent new work selection
+         * 2. Calls wait() to ensure all executing work completes
+         * 3. Unschedules and releases all remaining contracts
+         * 4. Reads concurrency provider pointer WITHOUT holding mutex lock
+         * 5. Calls notifyGroupDestroyed() to inform provider of destruction
+         *
+         * CRITICAL: The provider notification is made without holding the group's
+         * concurrency provider mutex to prevent ABBA deadlock with WorkService.
+         * Any deviation from this protocol may result in deadlock during destruction.
+         *
+         * The provider will then:
+         * - Remove this group from its internal lists
+         * - Call setConcurrencyProvider(nullptr) to clear the back-reference
+         *
+         * This ensures proper bidirectional cleanup without lock ordering issues.
          */
         ~WorkContractGroup();
         
