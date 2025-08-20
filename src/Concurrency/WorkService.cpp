@@ -274,7 +274,9 @@ namespace Concurrency {
     void WorkService::notifyGroupDestroyed(WorkContractGroup* group) {
         // When a group is destroyed, we should remove it from our list
         // This is important to prevent accessing a destroyed group
-        removeWorkContractGroup(group);
+        auto status = removeWorkContractGroup(group);
+        ENTROPY_ASSERT(status != GroupOperationStatus::NotFound,
+                       "Group destruction notification for unknown group");
     }
 
 
