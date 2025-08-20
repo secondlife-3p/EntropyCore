@@ -146,6 +146,7 @@ namespace Concurrency {
         
         // Concurrency provider support
         IConcurrencyProvider* _concurrencyProvider = nullptr; ///< Work notification provider
+        mutable std::shared_mutex _concurrencyProviderMutex; ///< Protects provider during setup/teardown (COLD PATH ONLY)
         std::list<std::function<void()>> _onCapacityAvailableCallbacks; ///< Capacity callbacks
         mutable std::mutex _callbackMutex; ///< Protects callback list
         

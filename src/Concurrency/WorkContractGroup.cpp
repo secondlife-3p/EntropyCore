@@ -206,8 +206,11 @@ namespace Concurrency {
         ENTROPY_ASSERT(mainThreadSelectingCount == 0, "WorkContractGroup destroyed with threads still in selectForMainThreadExecution");
 
         // Then notify the concurrency provider to remove us from active groups
-        if (_concurrencyProvider) {
-            _concurrencyProvider->notifyGroupDestroyed(this);
+        {
+            std::unique_lock<std::shared_mutex> lock(_concurrencyProviderMutex);
+            if (_concurrencyProvider) {
+                _concurrencyProvider->notifyGroupDestroyed(this);
+            }
         }
     }
 
@@ -293,8 +296,11 @@ namespace Concurrency {
         }
         
         // Notify concurrency provider if set
-        if (_concurrencyProvider) {
-            _concurrencyProvider->notifyWorkAvailable(this);
+        {
+            std::shared_lock<std::shared_mutex> lock(_concurrencyProviderMutex);
+            if (_concurrencyProvider) {
+                _concurrencyProvider->notifyWorkAvailable(this);
+            }
         }
         
         return ScheduleResult::Scheduled;
@@ -761,6 +767,7 @@ namespace Concurrency {
     }
     
     void WorkContractGroup::setConcurrencyProvider(IConcurrencyProvider* provider) {
+        std::unique_lock<std::shared_mutex> lock(_concurrencyProviderMutex);
         _concurrencyProvider = provider;
     }
     
