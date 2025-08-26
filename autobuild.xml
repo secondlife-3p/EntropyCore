@@ -54,7 +54,7 @@
                     <key>name</key>
                     <string>common</string>
                 </map>
-                <key>darwin64</key>
+                <key>darwin</key>
                 <map>
                     <key>configurations</key>
                     <map>
@@ -82,7 +82,7 @@
                         <string>lib/release/libEntropyCore.a</string>
                     </array>
                     <key>name</key>
-                    <string>darwin64</string>
+                    <string>darwin</string>
                 </map>
                 <key>windows64</key>
                 <map>

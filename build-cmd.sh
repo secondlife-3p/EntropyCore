@@ -61,7 +61,7 @@ case "$AUTOBUILD_PLATFORM" in
             -DBUILD_SHARED_LIBS=OFF \
             -DENTROPY_BUILD_TESTS=OFF \
             -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 \
             -DCMAKE_INSTALL_PREFIX="$stage"
         
         # Build the project
