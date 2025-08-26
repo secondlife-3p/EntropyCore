@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Core utilities and concurrency primitives for Entropy Engine",
   "supports": "!uwp",
+  "builtin-baseline": "c4af3593e1f1aa9e14a560a09e45ea2cb0dfd74d",
   "dependencies": [
     "catch2",
     "tracy"
