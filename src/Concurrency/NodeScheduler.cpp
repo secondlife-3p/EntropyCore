@@ -14,6 +14,11 @@
 #include <algorithm>
 #include <format>
 
+#ifdef EntropyDarwin
+using std::min;
+using std::max;
+#endif
+
 namespace EntropyEngine {
 namespace Core {
 namespace Concurrency {
