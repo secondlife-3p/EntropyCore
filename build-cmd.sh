@@ -53,10 +53,11 @@ mkdir -p "$BUILD_DIR"
 
 case "$AUTOBUILD_PLATFORM" in
     darwin*)
-        # Configure with CMake using vcpkg toolchain
+        # Configure with CMake using vcpkg toolchain with universal binary support
         cmake -S "$top" -B "$BUILD_DIR" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-osx \
+            -DVCPKG_TARGET_TRIPLET=universal-osx \
+            -DVCPKG_OVERLAY_TRIPLETS="$top/triplets" \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DENTROPY_BUILD_TESTS=OFF \
