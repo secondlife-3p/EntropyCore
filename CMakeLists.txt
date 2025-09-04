@@ -103,8 +103,10 @@ target_link_libraries(EntropyCore
 )
 
 add_executable(WorkContractExample Examples/WorkContractExample.cpp)
-
 target_link_libraries(WorkContractExample EntropyCore)
+
+add_executable(WorkGraphYieldableExample Examples/WorkGraphYieldableExample.cpp)
+target_link_libraries(WorkGraphYieldableExample EntropyCore)
 
 # Platform and compiler-specific settings
 if(WIN32)
