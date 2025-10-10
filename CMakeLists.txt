@@ -9,12 +9,14 @@ endif()
 project(EntropyCore 
     VERSION 1.0.0
     DESCRIPTION "Core utilities and concurrency primitives for Entropy Engine"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # Options
 option(BUILD_SHARED_LIBS "Build as a shared library" OFF)
-option(ENTROPY_BUILD_TESTS "Build tests for EntropyCore" OFF)
+option(ENTROPY_BUILD_TESTS "Build tests for EntropyCore" ON)
+# Entropy does not depend on C++ RTTI. You may optionally disable RTTI for these targets if desired.
+option(ENTROPY_REQUIRE_NO_RTTI "Disable C++ RTTI for Entropy targets" OFF)
 
 # Set C++20 standard with modules support
 set(CMAKE_CXX_STANDARD 20)
@@ -27,13 +29,23 @@ if(DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 
 # Find packages
-find_package(Tracy CONFIG REQUIRED)
-find_package(Catch2 3 CONFIG REQUIRED)
+option(ENTROPY_WITH_TRACY "Enable Tracy profiler integration" ON)
+if(ENTROPY_WITH_TRACY)
+    find_package(Tracy CONFIG QUIET)
+endif()
+find_package(Boost REQUIRED COMPONENTS type_index)
+find_package(efsw CONFIG REQUIRED)
+
+# Only require Catch2 when building tests
+if(ENTROPY_BUILD_TESTS)
+    find_package(Catch2 3 CONFIG REQUIRED)
+endif()
 
 # Core library source files
 set(ENTROPY_CORE_SOURCES
         src/Logging/Logger.cpp
         src/Logging/ConsoleSink.cpp
+        src/Logging/CLogger.cpp
         src/Concurrency/WorkContractHandle.cpp
         src/Concurrency/WorkContractGroup.cpp
         src/Concurrency/WorkGraph.cpp
@@ -43,13 +55,36 @@ set(ENTROPY_CORE_SOURCES
         src/Concurrency/RoundRobinScheduler.cpp
         src/Concurrency/NodeStateManager.cpp
         src/Concurrency/NodeScheduler.cpp
+        src/Core/EntropyObject.cpp
+        src/Core/EntropyCAPI.cpp
+        src/VirtualFileSystem/VirtualFileSystem.cpp
+        src/VirtualFileSystem/FileOperationHandle.cpp
+        src/VirtualFileSystem/FileHandle.cpp
+        src/VirtualFileSystem/DirectoryHandle.cpp
+        src/VirtualFileSystem/LocalFileSystemBackend.cpp
+        src/VirtualFileSystem/FileStream.cpp
+        src/VirtualFileSystem/WriteBatch.cpp
+        src/VirtualFileSystem/FileWatch.cpp
+        src/VirtualFileSystem/FileWatchManager.cpp
+        src/Core/EntropyServiceRegistry.cpp
+        src/Core/EntropyApplication.cpp
+        src/Core/EntropyMain.cpp
 )
 
 set(ENTROPY_CORE_HEADERS
         src/CoreCommon.h
         src/Core/EventBus.h
+        src/Core/EntropyClass.h
+        src/Core/EntropyObject.h
+        src/Core/RefObject.h
+        src/Core/EntropyInterop.h
+        src/Core/entropy_c_api.h
         src/EntropyCore.h
         src/ServiceLocator.h
+        src/Core/EntropyService.h
+        src/Core/EntropyServiceRegistry.h
+        src/Core/EntropyApplication.h
+        src/Core/entropy_main.h
         src/TypeSystem/GenericHandle.h
         src/TypeSystem/TypeID.h
         src/TypeSystem/Reflection.h
@@ -64,6 +99,7 @@ set(ENTROPY_CORE_HEADERS
         src/Logging/ILogSink.h
         src/Logging/ConsoleSink.h
         src/Logging/Logger.h
+        src/Logging/CLogger.h
         src/Concurrency/WorkContractHandle.h
         src/Concurrency/WorkContractGroup.h
         src/Concurrency/WorkGraph.h
@@ -80,7 +116,53 @@ set(ENTROPY_CORE_HEADERS
         src/Concurrency/AdaptiveRankingScheduler.h
         src/Concurrency/RandomScheduler.h
         src/Concurrency/RoundRobinScheduler.h
+        src/VirtualFileSystem/VirtualFileSystem.h
+        src/VirtualFileSystem/FileOperationHandle.h
+        src/VirtualFileSystem/FileHandle.h
+        src/VirtualFileSystem/DirectoryHandle.h
 )
+
+# C Concurrency API sources and headers
+set(ENTROPY_C_API_SOURCES
+        src/entropy/entropy_concurrency_types_c.cpp
+        src/entropy/entropy_work_contract_handle_c.cpp
+        src/entropy/entropy_work_contract_group_c.cpp
+        src/entropy/entropy_work_service_c.cpp
+        src/entropy/entropy_work_graph_c.cpp
+)
+
+set(ENTROPY_C_API_HEADERS
+        include/entropy/entropy_concurrency_types.h
+        include/entropy/entropy_work_contract_handle.h
+        include/entropy/entropy_work_contract_group.h
+        include/entropy/entropy_work_service.h
+        include/entropy/entropy_work_graph.h
+)
+
+# VFS C API sources and headers
+set(ENTROPY_VFS_C_API_SOURCES
+        src/entropy/entropy_vfs_types_c.cpp
+        src/entropy/entropy_virtual_file_system_c.cpp
+        src/entropy/entropy_file_handle_c.cpp
+        src/entropy/entropy_directory_handle_c.cpp
+        src/entropy/entropy_file_operation_handle_c.cpp
+        src/entropy/entropy_write_batch_c.cpp
+)
+
+set(ENTROPY_VFS_C_API_HEADERS
+        include/entropy/entropy_vfs_types.h
+        include/entropy/entropy_virtual_file_system.h
+        include/entropy/entropy_file_handle.h
+        include/entropy/entropy_directory_handle.h
+        include/entropy/entropy_file_operation_handle.h
+        include/entropy/entropy_write_batch.h
+)
+
+# Append to main lists
+list(APPEND ENTROPY_C_API_SOURCES ${ENTROPY_VFS_C_API_SOURCES})
+list(APPEND ENTROPY_C_API_HEADERS ${ENTROPY_VFS_C_API_HEADERS})
+list(APPEND ENTROPY_CORE_SOURCES ${ENTROPY_C_API_SOURCES})
+list(APPEND ENTROPY_CORE_HEADERS ${ENTROPY_C_API_HEADERS})
 
 # Create the core library
 add_library(EntropyCore)
@@ -89,7 +171,7 @@ target_sources(EntropyCore
         ${ENTROPY_CORE_SOURCES}
     PUBLIC
         FILE_SET HEADERS
-        BASE_DIRS src
+        BASE_DIRS src include
         FILES ${ENTROPY_CORE_HEADERS}
 )
 
@@ -98,33 +180,156 @@ target_compile_features(EntropyCore PUBLIC cxx_std_20)
 
 # Include directories
 target_include_directories(EntropyCore
-    PUBLIC 
+    PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 
 # Link dependencies
-target_link_libraries(EntropyCore 
+target_link_libraries(EntropyCore
     PUBLIC
-        Tracy::TracyClient
+        Boost::type_index
+    PRIVATE
+        efsw::efsw
 )
 
+# Define for export macros when building the library
+target_compile_definitions(EntropyCore PRIVATE ENTROPYCORE_BUILDING)
+# Define if building shared library to enable dllexport/dllimport in headers
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(EntropyCore PUBLIC ENTROPYCORE_SHARED)
+endif()
+
+# Link Tracy if enabled and available
+if(ENTROPY_WITH_TRACY)
+  if(TARGET Tracy::TracyClient)
+    target_link_libraries(EntropyCore PUBLIC Tracy::TracyClient)
+  endif()
+endif()
+
 add_executable(WorkContractExample Examples/WorkContractExample.cpp)
-target_link_libraries(WorkContractExample EntropyCore Tracy::TracyClient)
+target_link_libraries(WorkContractExample PRIVATE EntropyCore)
 
 add_executable(WorkGraphYieldableExample Examples/WorkGraphYieldableExample.cpp)
-target_link_libraries(WorkGraphYieldableExample EntropyCore Tracy::TracyClient)
+target_link_libraries(WorkGraphYieldableExample PRIVATE EntropyCore)
+
+add_executable(EntropyObjectExample Examples/EntropyObjectExample.cpp)
+target_link_libraries(EntropyObjectExample PRIVATE EntropyCore)
+
+add_executable(EntropyObjectHandleExample Examples/EntropyObjectHandleExample.cpp)
+target_link_libraries(EntropyObjectHandleExample PRIVATE EntropyCore)
+
+# C ABI example (pure C)
+add_executable(CInteropExample Examples/CInteropExample.c Examples/CInteropExample_linkshim.cpp)
+# Link against the C++ library; ensure C++ linker is used on some toolchains
+set_property(TARGET CInteropExample PROPERTY LINKER_LANGUAGE CXX)
+# Link core
+target_link_libraries(CInteropExample PRIVATE EntropyCore)
+
+# C Concurrency API example (pure C)
+add_executable(ConcurrencyAPIExample Examples/ConcurrencyAPIExample.c)
+# Ensure C++ linker is used (C target linking against C++ library)
+set_property(TARGET ConcurrencyAPIExample PROPERTY LINKER_LANGUAGE CXX)
+# Link core
+target_link_libraries(ConcurrencyAPIExample PRIVATE EntropyCore)
+
+# VFS C API example (pure C)
+add_executable(VFSCAPIExample Examples/VFSCAPIExample.c)
+# Ensure C++ linker is used (C target linking against C++ library)
+set_property(TARGET VFSCAPIExample PROPERTY LINKER_LANGUAGE CXX)
+# Link core
+target_link_libraries(VFSCAPIExample PRIVATE EntropyCore)
+
+# WorkGraph C API example (pure C)
+add_executable(WorkGraphCAPIExample Examples/WorkGraphCAPIExample.c)
+# Ensure C++ linker is used (C target linking against C++ library)
+set_property(TARGET WorkGraphCAPIExample PROPERTY LINKER_LANGUAGE CXX)
+# Link core
+target_link_libraries(WorkGraphCAPIExample PRIVATE EntropyCore)
+
+add_executable(VirtualFileSystemExample Examples/VirtualFileSystemExample.cpp)
+target_link_libraries(VirtualFileSystemExample PRIVATE EntropyCore)
+# Avoid Windows min/max macro pollution
+if(WIN32)
+  target_compile_definitions(VirtualFileSystemExample PRIVATE NOMINMAX)
+endif()
+
+add_executable(VirtualFileStreamingExample Examples/VirtualFileStreamingExample.cpp)
+target_link_libraries(VirtualFileStreamingExample PRIVATE EntropyCore)
+if(WIN32)
+  target_compile_definitions(VirtualFileStreamingExample PRIVATE NOMINMAX)
+endif()
+
+# Focused VFS examples (PR3)
+add_executable(VFS_Basics Examples/VFS_Basics.cpp)
+target_link_libraries(VFS_Basics PRIVATE EntropyCore)
+
+add_executable(VFS_LinesAndBatch Examples/VFS_LinesAndBatch.cpp)
+target_link_libraries(VFS_LinesAndBatch PRIVATE EntropyCore)
+
+add_executable(VFS_Streams Examples/VFS_Streams.cpp)
+target_link_libraries(VFS_Streams PRIVATE EntropyCore)
+
+add_executable(VFS_CopyMove Examples/VFS_CopyMove.cpp)
+target_link_libraries(VFS_CopyMove PRIVATE EntropyCore)
+
+add_executable(VFS_Metadata Examples/VFS_Metadata.cpp)
+target_link_libraries(VFS_Metadata PRIVATE EntropyCore)
+# EntropyMain C ABI example
+add_executable(EntropyMainExample Examples/EntropyMainExample.c)
+# Ensure C++ linker is used (C target linking against C++ library)
+set_property(TARGET EntropyMainExample PROPERTY LINKER_LANGUAGE CXX)
+# Link core
+target_link_libraries(EntropyMainExample PRIVATE EntropyCore)
+
+# C++ EntropyApplication/Delegate example
+add_executable(EntropyCppAppExample Examples/EntropyCppAppExample.cpp)
+target_link_libraries(EntropyCppAppExample PRIVATE EntropyCore)
+
+# Link Tracy to examples if available
+if(ENTROPY_WITH_TRACY)
+  if(TARGET Tracy::TracyClient)
+    target_link_libraries(WorkContractExample PRIVATE Tracy::TracyClient)
+    target_link_libraries(WorkGraphYieldableExample PRIVATE Tracy::TracyClient)
+    target_link_libraries(EntropyObjectExample PRIVATE Tracy::TracyClient)
+    target_link_libraries(EntropyObjectHandleExample PRIVATE Tracy::TracyClient)
+  endif()
+endif()
 
 # Platform and compiler-specific settings
 if(WIN32)
     # Settings for Windows
-    target_compile_definitions(EntropyCore PUBLIC WIN32_LEAN_AND_MEAN EntropyWindows)
+    target_compile_definitions(EntropyCore PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX EntropyWindows)
     if(MSVC)
         target_compile_options(EntropyCore PRIVATE /W4)
         # Use static runtime library to match vcpkg dependencies
-        set_property(TARGET EntropyCore PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        set_property(TARGET WorkContractExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        set_property(TARGET WorkGraphYieldableExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        set_property(TARGET EntropyCore PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET WorkContractExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET WorkGraphYieldableExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET EntropyObjectExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET EntropyObjectHandleExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET CInteropExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET VirtualFileSystemExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET VirtualFileStreamingExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        # PR3 examples
+        set_property(TARGET VFS_Basics PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET VFS_LinesAndBatch PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET VFS_Streams PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET VFS_CopyMove PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET VFS_Metadata PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET EntropyMainExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET EntropyCppAppExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_property(TARGET WorkGraphCAPIExample PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        # Optionally disable RTTI if requested
+        if(ENTROPY_REQUIRE_NO_RTTI)
+            target_compile_options(EntropyCore PRIVATE /GR-)
+            foreach(tgt IN ITEMS WorkContractExample WorkGraphYieldableExample EntropyObjectExample EntropyObjectHandleExample CInteropExample EntropyMainExample EntropyCppAppExample WorkGraphCAPIExample)
+                if(TARGET ${tgt})
+                    target_compile_options(${tgt} PRIVATE /GR-)
+                endif()
+            endforeach()
+        endif()
     endif()
 else()
     # Settings for non-Windows platforms (macOS, Linux)
@@ -137,19 +342,28 @@ else()
         # Linux specific
         target_compile_definitions(EntropyCore PUBLIC EntropyLinux)
     endif()
+    # Optionally disable RTTI if requested
+    if(ENTROPY_REQUIRE_NO_RTTI)
+        target_compile_options(EntropyCore PRIVATE -fno-rtti)
+        foreach(tgt IN ITEMS WorkContractExample WorkGraphYieldableExample EntropyObjectExample EntropyObjectHandleExample CInteropExample EntropyMainExample EntropyCppAppExample WorkGraphCAPIExample)
+            if(TARGET ${tgt})
+                target_compile_options(${tgt} PRIVATE -fno-rtti)
+            endif()
+        endforeach()
+    endif()
 endif()
 
 # Define preprocessor macros
-target_compile_definitions(EntropyCore
-    PUBLIC
-        TRACY_ENABLE
-        TRACY_ON_DEMAND
-)
-
-# Add EntropyDebug macro for Debug and Release with Debug Info builds.
-if($<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>)
-    target_compile_definitions(EntropyCore PUBLIC EntropyDebug)
+if(ENTROPY_WITH_TRACY AND TARGET Tracy::TracyClient)
+    target_compile_definitions(EntropyCore
+        PUBLIC
+            TRACY_ENABLE
+            TRACY_ON_DEMAND
+    )
 endif()
+
+# Add EntropyDebug macro for Debug and RelWithDebInfo builds via generator expression
+target_compile_definitions(EntropyCore PUBLIC $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:EntropyDebug>)
 
 # Export include directories for dependent projects
 set_target_properties(EntropyCore PROPERTIES
@@ -163,26 +377,54 @@ if(ENTROPY_BUILD_TESTS)
     enable_testing()
     
     # Test executable
+    # Test helper sources
+    set(TEST_HELPERS
+            Tests/TestHelpers/VFSTestHelpers.cpp
+    )
+
+    # Core utility tests
+    set(CORE_TESTS
+            Tests/Core/LoggingTests.cpp
+            Tests/Core/DebugInterfaceTests.cpp
+            Tests/Core/GraphTests.cpp
+            Tests/Core/TypeSystemTests.cpp
+            Tests/Core/SignalTreeTests.cpp
+            Tests/Core/EntropyObjectTests.cpp
+    )
+
+    # Concurrency tests
+    set(CONCURRENCY_TESTS
+            Tests/Concurrency/WorkContractGroupTests.cpp
+            Tests/Concurrency/WorkContractGroupAccountingTests.cpp
+            Tests/Concurrency/WorkContractGroupLifetimeTests.cpp
+            Tests/Concurrency/WorkContractHighContentionTests.cpp
+            Tests/Concurrency/MainThreadWorkTests.cpp
+            Tests/Concurrency/WorkServiceTests.cpp
+    )
+
+    # WorkGraph tests
+    set(WORKGRAPH_TESTS
+            Tests/Concurrency/WorkGraph/WorkGraphTests.cpp
+            Tests/Concurrency/WorkGraph/WorkGraphArchitectureTests.cpp
+            Tests/Concurrency/WorkGraph/WorkGraphServiceIntegrationTests.cpp
+            Tests/Concurrency/WorkGraph/WorkGraphRegressionTests.cpp
+            Tests/Concurrency/WorkGraph/WorkGraphSpecializedTests.cpp
+    )
+
+    # VirtualFileSystem tests
+    set(VFS_TESTS
+            Tests/VirtualFileSystem/VFSTests.cpp
+            Tests/VirtualFileSystem/VFSTextFidelityTests.cpp
+            Tests/VirtualFileSystem/VFSErrorMappingTests.cpp
+            Tests/VirtualFileSystem/VFSLockCacheTests.cpp
+    )
+
     add_executable(EntropyCoreTests
-            Tests/LoggingTests.cpp
-            Tests/DebugInterfaceTests.cpp
-            Tests/GraphTests.cpp
-            Tests/TypeSystemTests.cpp
-            Tests/WorkContractGroupTests.cpp
-            Tests/WorkContractHighContentionTest.cpp
-            Tests/MainThreadWorkTest.cpp
-            Tests/WorkGraphTests.cpp
-            Tests/WorkServiceTests.cpp
-            Tests/WorkGraphArchitectureTests.cpp
-            Tests/WorkGraphServiceIntegrationTests.cpp
-            Tests/WorkGraphMemoryTest.cpp
-            Tests/WorkGraphDebugTest.cpp
-            Tests/WorkGraphSimpleTest.cpp
-            Tests/WorkGraphVectorTest.cpp
-            Tests/WorkGraphIsolatedHangTest.cpp
-            Tests/WorkGraphMainThreadTest.cpp
-            Tests/SignalTreeTests.cpp
-            Tests/WorkContractGroupAccountingTests.cpp
+            ${TEST_HELPERS}
+            ${CORE_TESTS}
+            ${CONCURRENCY_TESTS}
+            ${WORKGRAPH_TESTS}
+            ${VFS_TESTS}
     )
 
     target_link_libraries(EntropyCoreTests 
@@ -192,14 +434,23 @@ if(ENTROPY_BUILD_TESTS)
     )
     
     target_compile_features(EntropyCoreTests PRIVATE cxx_std_20)
+
+    if(WIN32 AND MSVC)
+        set_property(TARGET EntropyCoreTests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    endif()
     
     # Register tests with CTest
     include(CTest)
-    list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
-    if(TARGET Catch2::Catch2)
-        include(Catch)
-        catch_discover_tests(EntropyCoreTests)
-    endif()
+    # Register the unit test executable with CTest without relying on Catch2's module
+    add_test(NAME EntropyCoreTests COMMAND $<TARGET_FILE:EntropyCoreTests>)
+
+    # Convenience target: build tests and run them in one step. This prevents running stale binaries
+    # because the test execution only happens if EntropyCoreTests builds successfully.
+    add_custom_target(RunAllTests
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -C $<CONFIG>
+        DEPENDS EntropyCoreTests
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
 endif()
 
 # Installation
