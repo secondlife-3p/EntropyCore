@@ -53,29 +53,65 @@ mkdir -p "$BUILD_DIR"
 
 case "$AUTOBUILD_PLATFORM" in
     darwin*)
-        # Configure with CMake using vcpkg toolchain with universal binary support
-        cmake -S "$top" -B "$BUILD_DIR" \
+        # Build for x64 architecture
+        BUILD_DIR_X64="$top/build_autobuild_x64"
+        mkdir -p "$BUILD_DIR_X64"
+
+        echo "Building for x86_64..."
+        cmake -S "$top" -B "$BUILD_DIR_X64" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=universal-osx \
-            -DVCPKG_OVERLAY_TRIPLETS="$top/triplets" \
+            -DVCPKG_TARGET_TRIPLET=x64-osx \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DENTROPY_BUILD_TESTS=OFF \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 \
-            -DCMAKE_INSTALL_PREFIX="$stage"
-        
-        # Build the project
-        cmake --build "$BUILD_DIR" --config Release
-        
-        # Install to staging directory
-        cmake --install "$BUILD_DIR" --config Release
-        
-        # Move installed files to expected locations for autobuild
+            -DCMAKE_INSTALL_PREFIX="$stage/x64"
+
+        cmake --build "$BUILD_DIR_X64" --config Release
+        cmake --install "$BUILD_DIR_X64" --config Release
+
+        # Build for arm64 architecture
+        BUILD_DIR_ARM64="$top/build_autobuild_arm64"
+        mkdir -p "$BUILD_DIR_ARM64"
+
+        echo "Building for arm64..."
+        cmake -S "$top" -B "$BUILD_DIR_ARM64" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-osx \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DENTROPY_BUILD_TESTS=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 \
+            -DCMAKE_INSTALL_PREFIX="$stage/arm64"
+
+        cmake --build "$BUILD_DIR_ARM64" --config Release
+        cmake --install "$BUILD_DIR_ARM64" --config Release
+
+        # Create universal binaries using lipo
         mkdir -p "$stage/lib/release"
-        if [ -f "$stage/lib/libEntropyCore.a" ]; then
-            mv "$stage/lib/libEntropyCore.a" "$stage/lib/release/"
+
+        echo "Creating universal binary with lipo..."
+        if [ -f "$stage/x64/lib/libEntropyCore.a" ] && [ -f "$stage/arm64/lib/libEntropyCore.a" ]; then
+            lipo -create \
+                "$stage/x64/lib/libEntropyCore.a" \
+                "$stage/arm64/lib/libEntropyCore.a" \
+                -output "$stage/lib/release/libEntropyCore.a"
+            echo "Universal binary created successfully"
+        else
+            echo "Error: Could not find architecture-specific libraries"
+            exit 1
         fi
+
+        # Copy headers from x64 build (they should be identical)
+        mkdir -p "$stage/include"
+        if [ -d "$stage/x64/include" ]; then
+            cp -R "$stage/x64/include"/* "$stage/include/"
+        fi
+
+        # Clean up architecture-specific staging directories
+        rm -rf "$stage/x64" "$stage/arm64"
         
         # Move headers to EntropyCore subdirectory
         if [ -d "$stage/include" ]; then
