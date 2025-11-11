@@ -35,15 +35,15 @@ FileOpStatus FileOperationHandle::status() const noexcept {
     return _s ? _s->st.load(std::memory_order_acquire) : FileOpStatus::Pending;
 }
 
-std::span<const std::byte> FileOperationHandle::contentsBytes() const {
+std::span<const uint8_t> FileOperationHandle::contentsBytes() const {
     if (!_s) return {};
-    
+
     // Ensure operation is complete before accessing data
     if (!_s->isComplete.load(std::memory_order_acquire)) {
         wait();
     }
-    
-    return std::span<const std::byte>(_s->bytes.data(), _s->bytes.size());
+
+    return std::span<const uint8_t>(_s->bytes.data(), _s->bytes.size());
 }
 
 std::string FileOperationHandle::contentsText() const {
@@ -128,5 +128,11 @@ FileOperationHandle FileOperationHandle::immediate(FileOpStatus status) {
     state->isComplete.store(true, std::memory_order_release);
     return FileOperationHandle(state);
 }
+
+std::shared_ptr<FileOperationHandle::OpState> FileOperationHandle::makeState() {
+    return std::make_shared<OpState>();
+}
+
+FileOperationHandle::FileOperationHandle(std::shared_ptr<OpState> s) : _s(std::move(s)) {}
 
 } // namespace EntropyEngine::Core::IO

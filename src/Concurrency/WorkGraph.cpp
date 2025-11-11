@@ -28,8 +28,6 @@ WorkGraph::WorkGraph(WorkContractGroup* workContractGroup, const WorkGraphConfig
     : Debug::Named("WorkGraph")
     , _workContractGroup(workContractGroup)
     , _config(config) {
-    ENTROPY_PROFILE_ZONE();
-    
     if (_config.enableDebugLogging) {
         ENTROPY_LOG_DEBUG_CAT("Concurrency", "WorkGraph constructor called");
     }
@@ -67,6 +65,7 @@ WorkGraph::WorkGraph(WorkContractGroup* workContractGroup, const WorkGraphConfig
     _scheduler = std::make_unique<NodeScheduler>(
         _workContractGroup,
         this,
+        &_graphMutex,
         _config.enableEvents ? getEventBus() : nullptr,
         schedulerConfig
     );
@@ -152,6 +151,15 @@ WorkGraph::WorkGraph(WorkContractGroup* workContractGroup, const WorkGraphConfig
             onNodeYielded(node);
         }
     };
+    callbacks.onNodeYieldedUntil = [this](NodeHandle node, std::chrono::steady_clock::time_point wakeTime) {
+        CallbackGuard guard(this);
+        if (!_destroyed.load(std::memory_order_acquire)) {
+            if (_config.enableDebugLogging) {
+                ENTROPY_LOG_DEBUG_CAT("Concurrency", "WorkGraph: Node yielded until specific time");
+            }
+            onNodeYieldedUntil(node, wakeTime);
+        }
+    };
     _scheduler->setCallbacks(callbacks);
     
     // Register callback for when contract capacity becomes available
@@ -163,7 +171,14 @@ WorkGraph::WorkGraph(WorkContractGroup* workContractGroup, const WorkGraphConfig
             if (_config.enableDebugLogging) {
                 ENTROPY_LOG_DEBUG_CAT("Concurrency", "WorkGraph: Capacity available callback triggered");
             }
-            // Try to process deferred nodes multiple times to fill capacity
+
+            // First, check timed deferrals - wake up any timers/delayed work that's ready
+            size_t timedProcessed = _scheduler->processTimedDeferredNodes();
+            if (timedProcessed > 0 && _config.enableDebugLogging) {
+                ENTROPY_LOG_DEBUG_CAT("Concurrency", "WorkGraph: Processed " + std::to_string(timedProcessed) + " timed deferred nodes");
+            }
+
+            // Then process regular deferred nodes multiple times to fill capacity
             // This is important when we have many deferred nodes
             for (size_t i = 0; i < _config.maxDeferredProcessingIterations; i++) {
                 size_t processed = _scheduler->processDeferredNodes();
@@ -174,7 +189,12 @@ WorkGraph::WorkGraph(WorkContractGroup* workContractGroup, const WorkGraphConfig
             }
         }
     });
-    
+
+    // Set up timed deferral callback to avoid dynamic_cast in WorkService
+    _workContractGroup->setTimedDeferralCallback([this]() {
+        return checkTimedDeferrals();
+    });
+
     // Register with debug system (can be disabled via config)
     if (_config.enableDebugRegistration) {
         Debug::DebugRegistry::getInstance().registerObject(this, "WorkGraph");
@@ -184,8 +204,6 @@ WorkGraph::WorkGraph(WorkContractGroup* workContractGroup, const WorkGraphConfig
 }
 
 WorkGraph::~WorkGraph() {
-    ENTROPY_PROFILE_ZONE();
-    
     if (_config.enableDebugLogging) {
         ENTROPY_LOG_DEBUG_CAT("Concurrency", "WorkGraph destructor starting, pending nodes: " + std::to_string(_pendingNodes.load()));
     }
@@ -193,10 +211,11 @@ WorkGraph::~WorkGraph() {
     // Set destroyed flag to prevent new callbacks
     _destroyed.store(true, std::memory_order_release);
     
-    // Unregister capacity callback from WorkContractGroup first
+    // Unregister callbacks from WorkContractGroup first
     // This prevents new callbacks from being scheduled
     if (_workContractGroup) {
         _workContractGroup->removeOnCapacityAvailable(_capacityCallbackIt);
+        _workContractGroup->setTimedDeferralCallback(nullptr); // Clear timed deferral callback
     }
     
     // Wait for all active callbacks to complete
@@ -223,7 +242,6 @@ WorkGraph::NodeHandle WorkGraph::addNode(std::function<void()> work,
                                         const std::string& name,
                                         void* userData,
                                         ExecutionType executionType) {
-    ENTROPY_PROFILE_ZONE();
     std::unique_lock<std::shared_mutex> lock(_graphMutex);
     
     // Create node with the work and execution type
@@ -268,7 +286,6 @@ WorkGraph::NodeHandle WorkGraph::addYieldableNode(YieldableWorkFunction work,
                                                   void* userData,
                                                   ExecutionType executionType,
                                                   std::optional<uint32_t> maxReschedules) {
-    ENTROPY_PROFILE_ZONE();
     std::unique_lock<std::shared_mutex> lock(_graphMutex);
     
     // Create node with yieldable work function
@@ -317,7 +334,6 @@ WorkGraph::NodeHandle WorkGraph::addYieldableNode(YieldableWorkFunction work,
 }
 
 void WorkGraph::addDependency(NodeHandle from, NodeHandle to) {
-    ENTROPY_PROFILE_ZONE();
     std::unique_lock<std::shared_mutex> lock(_graphMutex);
     
     // Add edge in the DAG (this checks for cycles)
@@ -442,8 +458,6 @@ void WorkGraph::resume() {
 }
 
 void WorkGraph::execute() {
-    ENTROPY_PROFILE_ZONE();
-    
     if (_config.enableDebugLogging) {
         ENTROPY_LOG_INFO_CAT("Concurrency", "WorkGraph::execute() starting");
     }
@@ -610,8 +624,6 @@ void WorkGraph::onNodeComplete(NodeHandle node) {
 }
 
 WorkGraph::WaitResult WorkGraph::wait() {
-    ENTROPY_PROFILE_ZONE();
-    
     if (_config.enableDebugLogging) {
         ENTROPY_LOG_DEBUG_CAT("Concurrency", "WorkGraph::wait() called");
     }
@@ -682,6 +694,14 @@ size_t WorkGraph::processDeferredNodes() {
     return 0;
 }
 
+size_t WorkGraph::checkTimedDeferrals() {
+    // Delegate to scheduler to process timed deferred nodes
+    if (_scheduler) {
+        return _scheduler->processTimedDeferredNodes();
+    }
+    return 0;
+}
+
 WorkGraph::NodeHandle WorkGraph::addContinuation(const std::vector<NodeHandle>& parents,
                                                 std::function<void()> work,
                                                 const std::string& name,
@@ -729,36 +749,75 @@ void WorkGraph::onNodeFailed(NodeHandle node) {
 void WorkGraph::onNodeYielded(NodeHandle node) {
     auto* nodeData = _graph.getNodeData(node);
     if (!nodeData) return;
-    
+
     // Increment reschedule count
     uint32_t rescheduleCount = nodeData->rescheduleCount.fetch_add(1, std::memory_order_relaxed);
-    
+
     if (_config.enableDebugLogging) {
-        auto msg = std::format("Node '{}' yielded (reschedule count: {})", 
+        auto msg = std::format("Node '{}' yielded (reschedule count: {})",
                               nodeData->name, rescheduleCount + 1);
         ENTROPY_LOG_DEBUG_CAT("WorkGraph", msg);
     }
-    
+
     // Check reschedule limit
     if (nodeData->maxReschedules && rescheduleCount >= *nodeData->maxReschedules) {
         if (_config.enableDebugLogging) {
-            auto msg = std::format("Node '{}' reached max reschedule limit ({}), completing", 
+            auto msg = std::format("Node '{}' reached max reschedule limit ({}), completing",
                                   nodeData->name, *nodeData->maxReschedules);
             ENTROPY_LOG_WARNING_CAT("WorkGraph", msg);
         }
-        
+
         // Hit limit - treat as completed
         onNodeComplete(node);
         return;
     }
-    
+
     // Transition to Yielded state
     if (_stateManager) {
         _stateManager->transitionState(node, NodeState::Executing, NodeState::Yielded);
     }
-    
-    // Reschedule the node
+
+    // Reschedule the node immediately
     rescheduleYieldedNode(node);
+}
+
+void WorkGraph::onNodeYieldedUntil(NodeHandle node, std::chrono::steady_clock::time_point wakeTime) {
+    auto* nodeData = _graph.getNodeData(node);
+    if (!nodeData) return;
+
+    // Increment reschedule count
+    uint32_t rescheduleCount = nodeData->rescheduleCount.fetch_add(1, std::memory_order_relaxed);
+
+    if (_config.enableDebugLogging) {
+        auto now = std::chrono::steady_clock::now();
+        auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(wakeTime - now);
+        auto msg = std::format("Node '{}' yielded until wake time (delay: {}ms, reschedule count: {})",
+                              nodeData->name, delay.count(), rescheduleCount + 1);
+        ENTROPY_LOG_DEBUG_CAT("WorkGraph", msg);
+    }
+
+    // Check reschedule limit
+    if (nodeData->maxReschedules && rescheduleCount >= *nodeData->maxReschedules) {
+        if (_config.enableDebugLogging) {
+            auto msg = std::format("Node '{}' reached max reschedule limit ({}), completing",
+                                  nodeData->name, *nodeData->maxReschedules);
+            ENTROPY_LOG_WARNING_CAT("WorkGraph", msg);
+        }
+
+        // Hit limit - treat as completed
+        onNodeComplete(node);
+        return;
+    }
+
+    // Transition to Yielded state
+    if (_stateManager) {
+        _stateManager->transitionState(node, NodeState::Executing, NodeState::Yielded);
+    }
+
+    // Defer until wake time (not immediate reschedule!)
+    if (_scheduler) {
+        _scheduler->deferNodeUntil(node, wakeTime);
+    }
 }
 
 void WorkGraph::rescheduleYieldedNode(NodeHandle node) {
